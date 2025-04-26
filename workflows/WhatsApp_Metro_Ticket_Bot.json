@@ -1,0 +1,163 @@
+{
+  "name": "WhatsApp Metro Ticket Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "2cfd7291-42f8-4f30-a8ff-abc8a63b63bd",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "id": "5a8d57f6-93ed-4828-8bbf-df45296f1df8",
+      "name": "Webhook",
+      "webhookId": "2cfd7291-42f8-4f30-a8ff-abc8a63b63bd"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bdb053eb-260c-4f06-914f-184f1c123c3f",
+              "name": "message",
+              "value": "={{$json[\"body\"][\"Body\"]}}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [480, 160],
+      "id": "d97361ca-5f7c-4a1d-b751-3b2ad4a03f7f",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "function levenshtein(a, b) {\n  const matrix = Array.from({ length: b.length + 1 }, (_, i) =>\n    Array(a.length + 1).fill(0)\n  );\n  for (let i = 0; i <= a.length; i++) matrix[0][i] = i;\n  for (let j = 0; j <= b.length; j++) matrix[j][0] = j;\n\n  for (let j = 1; j <= b.length; j++) {\n    for (let i = 1; i <= a.length; i++) {\n      const cost = a[i - 1] === b[j - 1] ? 0 : 1;\n      matrix[j][i] = Math.min(\n        matrix[j][i - 1] + 1,\n        matrix[j - 1][i] + 1,\n        matrix[j - 1][i - 1] + cost\n      );\n    }\n  }\n  return matrix[b.length][a.length];\n}\n\nfunction fuzzyMatch(input, options) {\n  input = input.toLowerCase().trim();\n  let bestMatch = null;\n  let bestScore = Infinity;\n  for (const opt of options) {\n    const score = levenshtein(input, opt.toLowerCase());\n    if (score < bestScore) {\n      bestScore = score;\n      bestMatch = opt;\n    }\n  }\n  return bestScore <= 6 ? bestMatch : null; // loosened threshold\n}\n\nconst msg = ($json[\"message\"] || \"\").toLowerCase();\n\nconst stations = {\n  \"kaladipet\": [\"kaladipet\", \"kaladpet\"],\n  \"tollgate\": [\"tollgate\", \"tolgate\"],\n  \"new washermenpet\": [\"new washermenpet\"],\n  \"central\": [\"central\", \"chennai central\"],\n  \"egmore\": [\"egmore\"],\n  \"nehru park\": [\"nehru park\", \"nehru\"],\n  \"kilpauk\": [\"kilpauk\", \"kilpauk medical college\"],\n  \"pachaiyappa's\": [\"pachaiyappa's\", \"pachaiyappas\"],\n  \"shenoy nagar\": [\"shenoy nagar\"],\n  \"anna nagar east\": [\"anna nagar east\"],\n  \"anna nagar tower\": [\"anna nagar tower\"],\n  \"thirumangalam\": [\"thirumangalam\"],\n  \"koyambedu\": [\"koyambedu\", \"koyembedu\", \"cmbt\"],\n  \"vadapalani\": [\"vadapalani\"],\n  \"arumbakkam\": [\"arumbakkam\"],\n  \"ashok nagar\": [\"ashok nagar\", \"ashoknagar\", \"ashopnagar\"],\n  \"st thomas mount\": [\"st thomas mount\", \"mount\", \"thomas mount\"],\n  \"little mount\": [\"little mount\"],\n  \"guindy\": [\"guindy\"],\n  \"alandur\": [\"alandur\", \"alendur\"],\n  \"nanganallur\": [\"nanganallur\"],\n  \"meenambakkam\": [\"meenambakkam\"],\n  \"airport\": [\"airport\", \"chennai airport\"]\n};\n\nconst formatStation = name =>\n  name.split(' ').map(word => word[0].toUpperCase() + word.slice(1)).join(' ');\n\nconst aliasToStation = {};\nfor (const [station, aliases] of Object.entries(stations)) {\n  for (const alias of aliases) aliasToStation[alias] = station;\n}\nconst allAliases = Object.keys(aliasToStation);\n\nlet fromStation = \"\";\nlet toStation = \"\";\n\n// Try to match \"from X to Y\", \"dari X ke Y\", or \"X 2 Y\"\nlet travelMatch =\n  msg.match(/from\\s+([a-z\\s']+?)\\s+to\\s+([a-z\\s']+)/i) ||\n  msg.match(/dari\\s+([a-z\\s']+?)\\s+ke\\s+([a-z\\s']+)/i) ||\n  msg.match(/from\\s+([a-z\\s']+?)\\s+2\\s+([a-z\\s']+)/i) ||\n  msg.match(/dari\\s+([a-z\\s']+?)\\s+2\\s+([a-z\\s']+)/i) ||\n  msg.match(/([a-z\\s']+?)\\s+2\\s+([a-z\\s']+)/i);\n\nif (travelMatch) {\n  const fromGuess = fuzzyMatch(travelMatch[1].trim(), allAliases);\n  const toGuess = fuzzyMatch(travelMatch[2].trim(), allAliases);\n  fromStation = aliasToStation[fromGuess] || \"\";\n  toStation = aliasToStation[toGuess] || \"\";\n}\n\n// fallback: fuzzy match each word in the message\nif (!fromStation || !toStation) {\n  const words = msg.split(/\\s+/);\n  const found = [];\n  for (const word of words) {\n    const match = fuzzyMatch(word, allAliases);\n    if (match) found.push(aliasToStation[match]);\n  }\n  const unique = [...new Set(found)];\n  if (unique.length >= 2) {\n    fromStation = fromStation || unique[0];\n    toStation = toStation || unique[1];\n  }\n}\n\n// Generate Ticket ID\nconst generateTicketId = () => {\n  const fromCode = fromStation.replace(/\\s+/g, '').substring(0, 3).toUpperCase();\n  const toCode = toStation.replace(/\\s+/g, '').substring(0, 3).toUpperCase();\n  const randomDigits = Math.floor(100000 + Math.random() * 900000);\n  return `CMRL-${fromCode}-${toCode}-${randomDigits}`;\n};\n\nconst calculateFare = (from, to) => {\n  const all = Object.keys(stations);\n  const fromIdx = all.indexOf(from);\n  const toIdx = all.indexOf(to);\n  if (fromIdx === -1 || toIdx === -1) return 0;\n  const diff = Math.abs(fromIdx - toIdx);\n\n  if (diff <= 3) return 16;\n  if (diff <= 6) return 24;\n  if (diff <= 9) return 32;\n  return 40;\n};\n\nlet reply = \"\";\nlet ticketId = \"\";\nlet fare = 0;\nlet qrCodeUrl = \"\";\n\nif (fromStation && toStation) {\n  if (fromStation === toStation) {\n    reply = `⚠️ Your source and destination stations cannot be the same. Please try again.`;\n  } else {\n    ticketId = generateTicketId();\n    fare = calculateFare(fromStation, toStation);\n    const now = new Date();\n    const dateStr = now.toLocaleDateString('en-IN');\n    const timeStr = now.toLocaleTimeString('en-IN');\n\n    const qrData = `CMRL TICKET\\nID: ${ticketId}\\nFROM: ${formatStation(fromStation)}\\nTO: ${formatStation(toStation)}\\nFARE: ₹${fare}\\nDATE: ${dateStr}\\nTIME: ${timeStr}`;\n\n    qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;\n\n    reply = `🎫 *Ticket Confirmed*\\n\\n` +\n            `*Ticket ID:* ${ticketId}\\n` +\n            `*From:* ${formatStation(fromStation)}\\n` +\n            `*To:* ${formatStation(toStation)}\\n` +\n            `*Fare:* ₹${fare}\\n` +\n            `*Date:* ${dateStr}\\n` +\n            `*Time:* ${timeStr}\\n\\n` +\n            `Valid for one journey today. Show this message at stations.`;\n  }\n} else {\n  const sample = Object.keys(stations).slice(0, 5).map(formatStation).join(', ');\n  reply = `👋 *Welcome to CMRL Ticket Booking!*\\n\\n` +\n          `To book a ticket, reply like:\\n` +\n          `_Book from Ashok Nagar to Alandur_\\n\\n` +\n          `Sample stations: ${sample}...`;\n}\n\nconsole.log(\"Transcription:\", msg);\nconsole.log(\"From guess:\", fromStation);\nconsole.log(\"To guess:\", toStation);\n\nreturn [{\n  reply,\n  from: $json.from || $json.From || $json.body?.From || 'unknown',\n  ticketId,\n  fromStation: fromStation ? formatStation(fromStation) : '',\n  toStation: toStation ? formatStation(toStation) : '',\n  fare,\n  qrCodeUrl\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 140],
+      "id": "0d74c2ee-a7b3-4be2-b64c-f8fd43d66566",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_TWILIO_ACCOUNT_SID/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "={{ $('If1').item.json.body.To }}"
+            },
+            {
+              "name": "To",
+              "value": "={{ $('Code').item.json.from.trim() }}"
+            },
+            {
+              "name": "Body",
+              "value": "={{$json.reply}}"
+            },
+            {
+              "name": "MediaUrl",
+              "value": "={{$json.qrCodeUrl}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, -180],
+      "id": "5058212c-9fd0-49fa-af1d-e17ffddaf6e0",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fFHgbpAZmQfKjAs7",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9baf4b55-e036-4812-a10b-18742c345528",
+              "leftValue": "={{$json[\"qrCodeUrl\"]}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1360, 180],
+      "id": "5400fa7e-09d3-4dfb-a961-ccd77601de9f",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_TWILIO_ACCOUNT_SID/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "To",
+              "value": "={{$json[\"from\"]}}"
+            },
+            {
+              "name": "Body",
+              "value": "={{$json[\"reply\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 100],
+      "id": "862f36fc-31df-4e1b-9119-609491593c69",
+      "name": "HTTP Request1",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "fFHgbpAZmQfKjAs7",
+          "name": "Unnamed credential"
+        }
+      }
+    }
+    // ... (other nodes unchanged)
+  ],
+  // ... (rest of the workflow unchanged)
+}
+
